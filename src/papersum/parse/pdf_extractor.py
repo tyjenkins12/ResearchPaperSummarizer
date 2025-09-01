@@ -25,6 +25,7 @@ class ExtractedPaper:
 
 
 class PDFExtractor:
+## PDF extraction with Grobid and PyMuPDF
 
     def __init__(self):
         self.grobid_url = f"http://{settings.grobid.host}:{settings.grobid.port}"
@@ -111,6 +112,7 @@ class PDFExtractor:
             return 'other'
 
     def extract_paper(self, pdf_path: Path) -> ExtractedPaper:
+        # Extracting initially with Grobid
         grobid_xml = self.extract_with_grobid(pdf_path)
 
         if grobid_xml:
@@ -118,7 +120,8 @@ class PDFExtractor:
                 return self.parse_grobid_xml(gorbid_xml)
             except Exception as e:
                 self.logger.warning(f"Grobid parsing failed: {e}, falling back to PyMuPDF")
-
+            
+            # If Grobid fails, fallback to PyMuPDF
             text = self.extract_with_pymupdf(pdf_path)
             return ExtractedPaper(
                 title = pdf_path.stem,
