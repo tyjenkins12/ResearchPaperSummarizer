@@ -1,0 +1,115 @@
+[project]
+name = "paper-sum"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  # PDF Processing
+  "grobid-client-python>=0.0.16",
+  "lxml>=5.2.0",
+  "pymupdf>=1.24.0",
+  
+  # CLI and Utilities
+  "typer>=0.12.5",
+  "rich>=13.7.1",
+  "requests>=2.32.0",
+  "pydantic>=2.5.0",
+  "pydantic-settings>=2.1.0",
+  
+  # Local AI/ML Dependencies
+  "torch>=2.1.0",
+  "transformers>=4.36.0",
+  "sentence-transformers>=2.2.2",
+  "tokenizers>=0.15.0",
+  "datasets>=2.16.0",
+  
+  # NLP Libraries
+  "spacy>=3.7.0",
+  "nltk>=3.8.1",
+  "scikit-learn>=1.3.0",
+  
+  # Web Framework
+  "fastapi>=0.108.0",
+  "uvicorn[standard]>=0.25.0",
+  
+  # Data Processing
+  "pandas>=2.1.0",
+  "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.1.8",
+  "black>=23.12.0",
+  "mypy>=1.8.0",
+  "pytest>=7.4.0",
+  "pytest-cov>=4.1.0",
+  "pytest-asyncio>=0.23.0",
+  "pre-commit>=3.6.0",
+  "jupyter>=1.0.0",
+  "ipykernel>=6.27.0",
+]
+
+[project.scripts]
+parse-pdfs = "papersum.parse.tei_from_pdfs:app"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "papersum" = "src/papersum" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["papersum", "papersum.*"]
+
+# Ruff configuration for linting and formatting
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "PIE", "SIM"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# Black configuration (backup formatter)
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+# MyPy configuration for type checking
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=papersum",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]

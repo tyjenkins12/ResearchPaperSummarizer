@@ -1,0 +1,2 @@
+[console_scripts]
+parse-pdfs = papersum.parse.tei_from_pdfs:app
