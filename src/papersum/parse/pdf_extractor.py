@@ -127,7 +127,7 @@ class PDFExtractor:
                 title = pdf_path.stem,
                 abstract = "",
                 authors = [],
-                sections = []
+                sections = [],
                 full_text = text,
                 metadata = {"extraction_method": "pymupdf"}
             )
