@@ -7,7 +7,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import spacy
-from spacy.lan.en import English
+from spacy.lang.en import English
 from ..config.settings import settings
 from ..parse.pdf_extractor import ExtractedPaper, PaperSection
 
@@ -46,12 +46,12 @@ class ExtractiveSummarizer:
         embeddings = self.sentence_model.encode(sentences)
         doc_centroid = np.mean(embeddings, axis = 0).reshape(1, -1)
         similarities = cosine_similarity(embeddings, doc_centroid).flatten()
-        position_weights = np.exp(-np.arrange(len(sentences)) * 0.1)
+        position_weights = np.exp(-np.arange(len(sentences)) * 0.1)
         final_scores = similarities * 0.7 + position_weights * 0.3
 
         return final_scores.tolist()
 
-    def _calculate_sections_scores(self, sections: List[PaperSection]) -> Dict[str, float]:
+    def _calculate_section_scores(self, sections: List[PaperSection]) -> Dict[str, float]:
         section_weights = {
             'abstract': 1.0,
             'introduction': 0.8,
@@ -61,7 +61,7 @@ class ExtractiveSummarizer:
             'background': 0.4,
             'other': 0.3
         }
-        return {section.title: section_weights.get(section.section_type, 0.3)for section in sections}
+        return {section.title: section_weights.get(section.section_type, 0.3) for section in sections}
 
     def summarize_paper(self, paper: ExtractedPaper, num_sentences: int = 5) -> str:
         all_scored_sentences = []
@@ -109,11 +109,22 @@ class ExtractiveSummarizer:
         if len(sentences) <= num_sentences:
             return text
 
-        scores = self._calculate_sentences_scores(sentences, num_sentences)
+        scores = self._calculate_sentence_scores(sentences, num_sentences)
 
-        sentence_scores = list(zip(sentences, scores, ranges(len(sentences))))
-        top_sentences = sorted(sentences_scores, ket = lambda x: x[1], reverse = True)[:num_sentences]
+        sentence_scores = list(zip(sentences, scores, range(len(sentences))))
+        top_sentences = sorted(sentence_scores, key=lambda x: x[1], reverse=True)[:num_sentences]
 
         top_sentences.sort(key = lambda x: x[2])
 
         return ' '.join([sent[0] for sent in top_sentences])
+    
+    def summarize_sections(self, sections: List[PaperSection]) -> Dict[str, str]:
+        """Generate section-wise summaries"""
+        section_summaries = {}
+        
+        for section in sections:
+            if section.content and len(section.content) > 100:
+                summary = self.summarize_text(section.content, num_sentences=2)
+                section_summaries[section.title] = summary
+        
+        return section_summaries

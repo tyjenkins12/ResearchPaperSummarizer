@@ -141,7 +141,7 @@ class HybridSummarizer:
         if strategy is None:
             strategy = self._adaptive_strategy(paper)
 
-        self.logger.infor(f"Using strategy: {strategy.value}")
+        self.logger.info(f"Using strategy: {strategy.value}")
 
         extractive_summary = self.extractive.summarize_paper(paper, target_length // 20)
         abstractive_summary = self.abstractive.summarize_paper(paper, target_length)

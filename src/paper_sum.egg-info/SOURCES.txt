@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 src/paper_sum.egg-info/PKG-INFO
 src/paper_sum.egg-info/SOURCES.txt
@@ -6,5 +7,10 @@ src/paper_sum.egg-info/entry_points.txt
 src/paper_sum.egg-info/requires.txt
 src/paper_sum.egg-info/top_level.txt
 src/papersum/__init__.py
+src/papersum/config/settings.py
+src/papersum/models/abstractive.py
+src/papersum/models/extractive.py
+src/papersum/models/hybrid.py
 src/papersum/parse/__init__.py
+src/papersum/parse/pdf_extractor.py
 src/papersum/parse/tei_from_pdfs.py

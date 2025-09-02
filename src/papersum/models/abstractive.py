@@ -96,7 +96,7 @@ class AbstractiveSummarizer:
 
         with torch.no_grad():
             if self.device.type == "mps":
-                with torch.autocase(device_type = "cpu", dtype = torch.float16):
+                with torch.autocast(device_type="cpu", dtype=torch.float16):
                     summary_ids = self.model.generate(
                         **inputs,
                         max_new_tokens = min(settings.models.max_summary_length, 256),
@@ -180,7 +180,7 @@ class AbstractiveSummarizer:
         combined = ' '.join(chunk_summaries)
 
         if len(combined) > 1000:
-            return self._generate_summary _chunk(combined)
+            return self._generate_summary_chunk(combined)
         else:
             return combined
 

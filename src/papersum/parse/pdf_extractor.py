@@ -53,7 +53,7 @@ class PDFExtractor:
         doc.close()
         return text
 
-    def parse_grobid_xml(self, xml_contentL: str) -> ExtractedPaper:
+    def parse_grobid_xml(self, xml_content: str) -> ExtractedPaper:
         root = etree.fromstring(xml_content.encode())
 
         title_elem = root.xpath(".//titleStmt/title")[0]
@@ -117,7 +117,7 @@ class PDFExtractor:
 
         if grobid_xml:
             try:
-                return self.parse_grobid_xml(gorbid_xml)
+                return self.parse_grobid_xml(grobid_xml)
             except Exception as e:
                 self.logger.warning(f"Grobid parsing failed: {e}, falling back to PyMuPDF")
             
