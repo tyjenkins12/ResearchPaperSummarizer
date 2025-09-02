@@ -67,7 +67,7 @@ class AbstractiveSummarizer:
         sentences = text.split('. ')
         chunks = []
         current_chunk = []
-        currnet_length = 0
+        current_length = 0
 
         for sentence in sentences:
             sentence_tokens = len(self.tokenizer.encode(sentence + '. '))
@@ -164,7 +164,7 @@ class AbstractiveSummarizer:
             self.logger.info(f"Processing chunk {i + 1} / {len(chunks)} on {self.device}")
 
             try:
-                chunk_summary - self._generate_summary_chunk(chunk)
+                chunk_summary = self._generate_summary_chunk(chunk)
                 chunk_summaries.append(chunk_summary)
 
                 if self.device.type == "mps":
