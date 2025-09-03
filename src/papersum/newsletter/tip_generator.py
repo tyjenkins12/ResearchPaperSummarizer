@@ -670,7 +670,7 @@ from typing import List, Optional
 
 class UserConfig(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    email: str = Field(regex=r'^[^@]+@[^@]+\.[^@]+$')
+    email: str = Field(regex=r'^[^@]+@[^@]+\\.[^@]+$')
     preferences: List[str] = Field(default_factory=list)
     
     @validator('preferences')
