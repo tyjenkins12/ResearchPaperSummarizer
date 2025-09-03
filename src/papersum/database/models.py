@@ -50,7 +50,7 @@ class ResearchTopic(Base):
     __tablename__ = 'research_topics'
 
     id = Column(Integer, primary_key = True)
-    name = Column(String(255), unique = True, nullable = Flase)
+    name = Column(String(255), unique = True, nullable = False)
     description = Column(Text)
     category = Column(String(100))
 
@@ -58,7 +58,7 @@ class ResearchTopic(Base):
     trending_score = Column(Float, default = 0.0)
     last_updated = Column(DateTime, default = datetime.utcnow)
     
-    papers = relationship("Paper", seconday = paper_topics, back_populates = "topics")
+    papers = relationship("Paper", secondary = paper_topics, back_populates = "topics")
     interested_users = relationship("User", secondary = user_interests, back_populates = "interests")
 
 
@@ -96,7 +96,7 @@ class Paper(Base):
     processed_at = Column(DateTime)
     uploaded_by_user_id = Column(Integer, ForeignKey('users.id'))
 
-    topics = relationship("ResearchTopic", seconday = paper_topics, back_populates = "papers")
+    topics = relationship("ResearchTopic", secondary = paper_topics, back_populates = "papers")
     uploaded_by = relationship("User", back_populates = "uploaded_papers")
     newsletter_inclusions = relationship("NewsletterPaper", back_populates = "paper")
 
