@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  grobid:
+    image: lfoppiano/grobid:0.8.0
+    container_name: grobid-service
+    ports:
+      - "8070:8070"
+    environment:
+      # Increase memory for better performance
+      - JAVA_OPTS=-Xmx4g
+    volumes:
+      # Optional: persist Grobid models (reduces startup time)
+      - grobid_data:/opt/grobid/grobid-home/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8070/api/isalive"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  grobid_data:
+    driver: local

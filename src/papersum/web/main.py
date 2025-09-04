@@ -14,6 +14,7 @@ from datetime import datetime
 from ..database.models import User, Paper, UserInterest as DBUserInterest
 from ..database.session import get_db_session
 from ..parse.pdf_extractor import PDFExtractor
+from ..config.settings import settings
 from ..intelligence.preference_learner import PreferenceLearner, UserInterest
 from ..scraping.arxiv_monitor import ArxivMonitoringService
 from ..newsletter.tip_generator import AutoTipGenerator
@@ -1392,11 +1393,23 @@ async def update_schedule(
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    
+    # Test Grobid connection
+    grobid_status = "ready"
+    try:
+        import requests
+        response = requests.get(f"http://{settings.grobid.host}:{settings.grobid.port}/api/isalive", timeout=5)
+        if response.status_code != 200:
+            grobid_status = "unavailable"
+    except Exception:
+        grobid_status = "unavailable"
+    
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
             "pdf_extractor": "ready",
+            "grobid": grobid_status,
             "preference_learner": "ready", 
             "arxiv_service": "ready",
             "tip_generator": "ready",

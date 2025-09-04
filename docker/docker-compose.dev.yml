@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # Development application with hot reload
+  papersum-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: development
+    container_name: papersum-dev
+    ports:
+      - "8000:8000"
+    environment:
+      # Development settings
+      - PAPERSUM_DEBUG=true
+      - PAPERSUM_GROBID__HOST=grobid
+      - PAPERSUM_GROBID__PORT=8070
+      - DATABASE_URL=sqlite:///app/data/research_papers.db
+    volumes:
+      # Mount source code for hot reload
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - dev_data:/app/data
+      - model_cache:/root/.cache/papersum/models
+    depends_on:
+      grobid:
+        condition: service_healthy
+    networks:
+      - papersum-dev-network
+    command: ["uvicorn", "papersum.web.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # Grobid for development
+  grobid:
+    image: lfoppiano/grobid:0.8.0
+    container_name: grobid-dev
+    ports:
+      - "8070:8070"  # Expose for external testing
+    environment:
+      - JAVA_OPTS=-Xmx2g  # Less memory for development
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8070/api/isalive"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - papersum-dev-network
+
+volumes:
+  dev_data:
+    driver: local
+  model_cache:
+    driver: local
+
+networks:
+  papersum-dev-network:
+    driver: bridge

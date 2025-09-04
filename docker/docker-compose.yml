@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  # Main application
+  papersum:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    container_name: papersum-app
+    ports:
+      - "8000:8000"
+    environment:
+      # Database
+      - DATABASE_URL=sqlite:///app/data/research_papers.db
+      
+      # Grobid connection
+      - PAPERSUM_GROBID__HOST=grobid
+      - PAPERSUM_GROBID__PORT=8070
+      - PAPERSUM_GROBID__TIMEOUT=120
+      
+      # AI Models
+      - USE_LOCAL_MODELS=true
+      - DEVICE=cpu
+      
+      # Email configuration (set these in .env file)
+      - SMTP_SERVER=${SMTP_SERVER:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - FROM_EMAIL=${FROM_EMAIL:-}
+      - FROM_NAME=${FROM_NAME:-Research Paper Digest}
+      - SMTP_TLS=${SMTP_TLS:-true}
+      
+    volumes:
+      - app_data:/app/data
+      - model_cache:/root/.cache/papersum/models
+    depends_on:
+      grobid:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - papersum-network
+
+  # Grobid PDF processing service
+  grobid:
+    image: lfoppiano/grobid:0.8.0
+    container_name: grobid-service
+    expose:
+      - "8070"
+    environment:
+      - JAVA_OPTS=-Xmx4g
+    volumes:
+      - grobid_data:/opt/grobid/grobid-home/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8070/api/isalive"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - papersum-network
+
+  # Optional: PostgreSQL database for production
+  postgres:
+    image: postgres:15-alpine
+    container_name: papersum-db
+    environment:
+      - POSTGRES_DB=papersum
+      - POSTGRES_USER=papersum
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-papersum123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - papersum-network
+    profiles:
+      - postgres
+
+  # Optional: Redis for caching and background tasks
+  redis:
+    image: redis:7-alpine
+    container_name: papersum-redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - papersum-network
+    profiles:
+      - redis
+
+  # Optional: Nginx reverse proxy for production
+  nginx:
+    image: nginx:alpine
+    container_name: papersum-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - papersum
+    restart: unless-stopped
+    networks:
+      - papersum-network
+    profiles:
+      - nginx
+
+volumes:
+  app_data:
+    driver: local
+  grobid_data:
+    driver: local
+  model_cache:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  papersum-network:
+    driver: bridge

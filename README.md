@@ -1,6 +1,6 @@
 # Research Paper Summarizer (2025 Edition)
 
-A modernized research paper summarization system that leverages state-of-the-art transformer models for both extractive and abstractive summarization of academic papers.
+AI-powered research paper summarization with personalized newsletters and automated preference learning.
 
 ## About This Project
 
@@ -21,6 +21,13 @@ This updated version addresses these issues using:
 
 ## Features
 
+### Complete Newsletter System
+- **AI-Powered Paper Analysis**: Local processing with Apple Silicon optimization
+- **Preference Learning**: Automatically learns your research interests from uploaded papers
+- **arXiv Integration**: Discovers relevant papers based on your preferences
+- **Automated Newsletters**: Weekly email digest with papers and coding tips
+- **Admin Dashboard**: Monitor system health and user activity
+
 ### Multiple Summarization Methods
 - **Extractive**: Identifies and extracts the most important sentences using semantic similarity
 - **Abstractive**: Generates new summary text using local transformer models
@@ -33,9 +40,9 @@ This updated version addresses these issues using:
 
 ### Modern Architecture
 - FastAPI web interface for easy interaction
-- Structured data models with Pydantic validation
-- Configurable model selection and parameters
-- Apple Silicon MPS acceleration support
+- Docker deployment with production-ready setup
+- Email scheduling and automation
+- Comprehensive admin dashboard
 
 ## Requirements
 
@@ -43,23 +50,32 @@ This updated version addresses these issues using:
 - Docker (for Grobid PDF processing)
 - Apple Silicon Mac (for MPS optimization) or CUDA GPU (optional)
 
-## Setup
+## Quick Start
 
-1. **Start Grobid Server** (if not already running):
-   ```bash
-   docker run -p 8070:8070 lfoppiano/grobid:0.8.2
-   ```
+**For complete deployment instructions, see [docker/DEPLOYMENT.md](docker/DEPLOYMENT.md)**
 
-2. **Install Dependencies**:
-   ```bash
-   pip install -e .
-   pip install -e ".[dev]"  # For development tools
-   ```
+### Development Setup
 
-3. **Download Required Models** (first run will download automatically):
-   - Sentence-BERT: `all-MiniLM-L6-v2` (~90MB)
-   - BART: `facebook/bart-large-cnn` (~1.6GB)
-   - T5-small: `t5-small` (~240MB, lightweight option)
+```bash
+# Start development environment
+docker/deploy.sh development
+```
+
+### Production Setup
+
+```bash
+# Configure environment
+cp .env.example .env
+# Edit .env with your email settings
+
+# Deploy production environment
+docker/deploy.sh production
+```
+
+The application will be available at:
+- Main app: http://localhost:8000
+- API docs: http://localhost:8000/docs  
+- Admin dashboard: http://localhost:8000/admin
 
 ## Usage
 
@@ -101,12 +117,22 @@ uvicorn papersum.api.main:app --reload
 ## Project Structure
 
 ```
-src/papersum/
-├── config/          # Configuration management
-├── models/          # Summarization models (extractive, abstractive, hybrid)
-├── parse/           # PDF processing and text extraction
-├── api/             # FastAPI web interface
-└── utils/           # Logging and utilities
+├── src/papersum/          # Main application code
+│   ├── config/            # Configuration management
+│   ├── models/            # Summarization models (extractive, abstractive, hybrid)
+│   ├── parse/             # PDF processing and text extraction
+│   ├── web/               # FastAPI web interface
+│   ├── newsletter/        # Newsletter generation and email system
+│   ├── intelligence/      # Preference learning and recommendation
+│   └── database/          # Database models and operations
+├── tests/                 # Test files
+├── docker/                # Docker deployment files
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── deploy.sh
+│   └── DEPLOYMENT.md
+├── data/                  # Data files and uploads
+└── .env.example           # Environment configuration template
 ```
 
 ## Performance Notes

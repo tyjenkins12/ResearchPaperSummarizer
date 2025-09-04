@@ -55,34 +55,78 @@ class PDFExtractor:
 
     def parse_grobid_xml(self, xml_content: str) -> ExtractedPaper:
         root = etree.fromstring(xml_content.encode())
+        
+        # Define namespace for TEI documents
+        namespaces = {'tei': 'http://www.tei-c.org/ns/1.0'}
 
-        title_elem = root.xpath(".//titleStmt/title")[0]
-        title = title_elem.text if title_elem is not None else "Unknown Title"
+        # Extract title safely - check both locations
+        title = "Unknown Title"
+        
+        # Try title in titleStmt first
+        title_elems = root.xpath(".//tei:titleStmt/tei:title[@level='a'][@type='main']", namespaces=namespaces)
+        if not title_elems:
+            title_elems = root.xpath(".//tei:titleStmt/tei:title", namespaces=namespaces)
+        if not title_elems:
+            # Try title in analytic section
+            title_elems = root.xpath(".//tei:analytic/tei:title[@level='a'][@type='main']", namespaces=namespaces)
+        
+        if title_elems and title_elems[0].text:
+            title = title_elems[0].text
 
-        abstract_elem = root.xpath('.//abstract/p')
-        abstract = ' '.join([p.text or '' for p in abstract_elem])
+        # Extract abstract safely
+        abstract_elems = root.xpath('.//tei:abstract//tei:p', namespaces=namespaces)
+        abstract_parts = []
+        for elem in abstract_elems:
+            if elem.text:
+                abstract_parts.append(elem.text)
+            # Also get text from child elements
+            for child in elem.itertext():
+                if child.strip():
+                    abstract_parts.append(child.strip())
+        abstract = ' '.join(abstract_parts)
 
+        # Extract authors safely
         authors = []
-        author_elem = root.xpath('.//author/persName')
+        author_elems = root.xpath('.//tei:author/tei:persName', namespaces=namespaces)
         for author in author_elems:
-            forename = author.xpath('.//forename[@type = "first"]')
-            surname = author.xpath('.//surname')
-            if forename and surname:
-                name = f"{forename[0].text} {surname[0].text}"
-                authors.append(name)
+            forename_elems = author.xpath('.//tei:forename[@type="first"]', namespaces=namespaces)
+            surname_elems = author.xpath('.//tei:surname', namespaces=namespaces)
+            
+            forename_text = forename_elems[0].text if forename_elems and forename_elems[0].text else ""
+            surname_text = surname_elems[0].text if surname_elems and surname_elems[0].text else ""
+            
+            if forename_text or surname_text:
+                name = f"{forename_text} {surname_text}".strip()
+                if name:
+                    authors.append(name)
 
+        # Extract sections safely - from body
         sections = []
-        div_elems = root.xpath('.//div[@type = "section"]')
+        div_elems = root.xpath('.//tei:body//tei:div[tei:head]', namespaces=namespaces)
         for div in div_elems:
-            section_title = div.xpath('.//head')[0].text if div.xpath('//head') else "Untitled"
-            section_content = ' '.join([p.text or '' for p in div.xpath('.//p')])
+            head_elems = div.xpath('.//tei:head', namespaces=namespaces)
+            section_title = "Untitled"
+            if head_elems and head_elems[0].text:
+                section_title = head_elems[0].text
+            
+            # Extract all text content from paragraphs in this section
+            p_elems = div.xpath('.//tei:p', namespaces=namespaces)
+            section_parts = []
+            for p in p_elems:
+                # Get all text content including from child elements
+                for text in p.itertext():
+                    if text.strip():
+                        section_parts.append(text.strip())
+            
+            section_content = ' '.join(section_parts)
             section_type = self._classify_section(section_title.lower())
 
-            sections.append(PaperSection(
-                title = section_title,
-                content = section_content,
-                section_type = section_type
-            ))
+            if section_content:  # Only add sections with content
+                sections.append(PaperSection(
+                    title=section_title,
+                    content=section_content,
+                    section_type=section_type
+                ))
 
         full_text = abstract + ' ' + ' '.join([s.content for s in sections])
 
@@ -121,13 +165,13 @@ class PDFExtractor:
             except Exception as e:
                 self.logger.warning(f"Grobid parsing failed: {e}, falling back to PyMuPDF")
             
-            # If Grobid fails, fallback to PyMuPDF
-            text = self.extract_with_pymupdf(pdf_path)
-            return ExtractedPaper(
-                title = pdf_path.stem,
-                abstract = "",
-                authors = [],
-                sections = [],
-                full_text = text,
-                metadata = {"extraction_method": "pymupdf"}
-            )
+        # If Grobid fails, fallback to PyMuPDF
+        text = self.extract_with_pymupdf(pdf_path)
+        return ExtractedPaper(
+            title = pdf_path.stem,
+            abstract = "",
+            authors = [],
+            sections = [],
+            full_text = text,
+            metadata = {"extraction_method": "pymupdf"}
+        )
