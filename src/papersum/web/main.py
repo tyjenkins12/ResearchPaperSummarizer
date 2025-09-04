@@ -18,6 +18,9 @@ from ..intelligence.preference_learner import PreferenceLearner, UserInterest
 from ..scraping.arxiv_monitor import ArxivMonitoringService
 from ..newsletter.tip_generator import AutoTipGenerator
 from ..newsletter.coding_tips import CodingTipsManager
+from ..newsletter.generator import NewsletterService
+from ..newsletter.email_service import EmailService
+from ..newsletter.scheduler import get_newsletter_scheduler, start_newsletter_automation
 from .schemas import (
     UserCreate, UserResponse, PaperResponse, 
     InterestResponse, FeedbackRequest, PreferencesResponse
@@ -57,6 +60,9 @@ pdf_extractor = PDFExtractor()
 preference_learner = PreferenceLearner()
 arxiv_service = ArxivMonitoringService()
 tip_generator = AutoTipGenerator()
+newsletter_service = NewsletterService()
+email_service = EmailService()
+newsletter_scheduler = get_newsletter_scheduler()
 
 
 # Dependency to get current user (simplified - no auth for now)
@@ -94,35 +100,38 @@ async def home(request: Request):
             </style>
         </head>
         <body>
-            <h1>🔬 Research Paper Summarizer</h1>
+            <h1>Research Paper Summarizer</h1>
             <div class="nav">
-                <a href="/upload">📄 Upload Papers</a>
-                <a href="/preferences">⚙️ My Preferences</a>
-                <a href="/discover">🔍 Discover Papers</a>
-                <a href="/api/tips">💡 Get Tips</a>
-                <a href="/docs">📚 API Docs</a>
+                <a href="/upload">Upload Papers</a>
+                <a href="/preferences">My Preferences</a>
+                <a href="/discover">Discover Papers</a>
+                <a href="/newsletter/preview">Newsletter Preview</a>
+                <a href="/newsletter/settings">Email Settings</a>
+                <a href="/admin">Admin Dashboard</a>
+                <a href="/api/tips">Get Tips</a>
+                <a href="/docs">API Docs</a>
             </div>
             
             <div class="feature">
-                <h3>📤 Upload Research Papers</h3>
+                <h3>Upload Research Papers</h3>
                 <p>Upload PDF papers to learn your research interests and get personalized recommendations.</p>
                 <a href="/upload">Start Uploading →</a>
             </div>
             
             <div class="feature">
-                <h3>🤖 AI-Powered Discovery</h3>
+                <h3>AI-Powered Discovery</h3>
                 <p>Automatically discover relevant papers from arXiv based on your learned preferences.</p>
                 <a href="/discover">Discover Papers →</a>
             </div>
             
             <div class="feature">
-                <h3>📊 Personal Dashboard</h3>
+                <h3>Personal Dashboard</h3>
                 <p>View your learned interests, uploaded papers, and preference evolution.</p>
                 <a href="/preferences">View Dashboard →</a>
             </div>
             
             <div class="feature">
-                <h3>🔧 Coding Tips</h3>
+                <h3>Coding Tips</h3>
                 <p>Get personalized coding tips based on your research interests and trending topics.</p>
                 <a href="/api/tips">Get Tips →</a>
             </div>
@@ -158,21 +167,21 @@ async def upload_page(request: Request):
         </head>
         <body>
             <div class="nav">
-                <a href="/">🏠 Home</a>
-                <a href="/preferences">⚙️ Preferences</a>
-                <a href="/discover">🔍 Discover</a>
+                <a href="/">Home</a>
+                <a href="/preferences">Preferences</a>
+                <a href="/discover">Discover</a>
             </div>
             
-            <h1>📄 Upload Research Papers</h1>
+            <h1>Upload Research Papers</h1>
             <p>Upload PDF files to learn your research interests. The system will analyze your papers to understand your preferences and recommend similar research.</p>
             
             <form action="/upload" method="post" enctype="multipart/form-data">
                 <div class="upload-area">
-                    <h3>📂 Select PDF Files</h3>
+                    <h3>Select PDF Files</h3>
                     <input type="file" name="files" multiple accept=".pdf" required>
                     <p style="color: #666; font-size: 14px;">You can select multiple PDF files at once</p>
                 </div>
-                <button type="submit">🚀 Process Papers</button>
+                <button type="submit">Process Papers</button>
             </form>
             
             <div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
@@ -767,6 +776,619 @@ async def get_user_profile(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/newsletter/preview", response_class=HTMLResponse)
+async def newsletter_preview(
+    request: Request,
+    user: User = Depends(get_current_user)
+):
+    """Preview newsletter for current user"""
+    
+    try:
+        # Generate newsletter preview
+        preview = newsletter_service.generate_newsletter_preview(user.id)
+        
+        # Format as HTML (simplified)
+        html = f"""
+        <html>
+        <head>
+            <title>Newsletter Preview</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; text-align: center; }}
+                .paper {{ border: 1px solid #ddd; padding: 15px; margin: 15px 0; border-radius: 8px; background: #f8f9fa; }}
+                .tip {{ border: 1px solid #ccc; padding: 15px; margin: 15px 0; border-radius: 8px; background: #fff; }}
+                .nav a {{ margin-right: 15px; text-decoration: none; color: #007bff; }}
+            </style>
+        </head>
+        <body>
+            <div class="nav">
+                <a href="/">Home</a>
+                <a href="/preferences">Preferences</a>
+                <a href="/discover">Discover</a>
+            </div>
+            
+            <div class="header">
+                <h1>{preview['title']}</h1>
+                <p>Estimated read time: {preview['estimated_read_time']} minutes</p>
+            </div>
+            
+            <h2>Research Papers ({len(preview['papers'])})</h2>
+        """
+        
+        for i, paper in enumerate(preview['papers'], 1):
+            html += f"""
+            <div class="paper">
+                <h3>{i}. {paper['title']}</h3>
+                <p><strong>Authors:</strong> {', '.join(paper['authors'])}</p>
+                <p><strong>Why relevant:</strong> {paper['why_relevant']}</p>
+                <p><strong>Summary:</strong> {paper['summary']}</p>
+            </div>
+            """
+        
+        html += f"<h2>Coding Tips ({len(preview['coding_tips'])})</h2>"
+        
+        for i, tip in enumerate(preview['coding_tips'], 1):
+            html += f"""
+            <div class="tip">
+                <h3>{i}. {tip['title']}</h3>
+                <p><strong>Category:</strong> {tip['category']} | <strong>Level:</strong> {tip['difficulty']}</p>
+                <p>{tip['content']}</p>
+            </div>
+            """
+        
+        html += """
+            <p style="text-align: center; margin-top: 40px; color: #666;">
+                Generated with AI • This is a preview of your personalized newsletter
+            </p>
+        </body>
+        </html>
+        """
+        
+        return HTMLResponse(html)
+        
+    except Exception as e:
+        logger.error(f"Newsletter preview failed: {e}")
+        return HTMLResponse(f"""
+        <html>
+        <body>
+            <h1>Newsletter Preview Error</h1>
+            <p>Error: {e}</p>
+            <a href="/">Back to Home</a>
+        </body>
+        </html>
+        """)
+
+
+@app.get("/newsletter/settings", response_class=HTMLResponse)
+async def newsletter_settings_page(
+    request: Request,
+    user: User = Depends(get_current_user)
+):
+    """Newsletter settings and email configuration page"""
+    
+    try:
+        # Get scheduler status
+        scheduler_status = newsletter_scheduler.get_schedule_info()
+        
+        html = f"""
+        <html>
+        <head>
+            <title>Newsletter Settings</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; }}
+                .nav a {{ margin-right: 15px; text-decoration: none; color: #007bff; }}
+                .section {{ border: 1px solid #ddd; padding: 20px; margin: 20px 0; border-radius: 8px; }}
+                .status {{ padding: 10px; border-radius: 5px; margin: 10px 0; }}
+                .status.running {{ background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }}
+                .status.stopped {{ background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }}
+                button {{ background: #007bff; color: white; padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }}
+                button:hover {{ background: #0056b3; }}
+                button.danger {{ background: #dc3545; }}
+                button.danger:hover {{ background: #c82333; }}
+                input, select {{ padding: 8px; margin: 5px; border: 1px solid #ddd; border-radius: 3px; }}
+                .form-group {{ margin: 15px 0; }}
+                label {{ display: block; margin-bottom: 5px; font-weight: bold; }}
+            </style>
+        </head>
+        <body>
+            <div class="nav">
+                <a href="/">Home</a>
+                <a href="/newsletter/preview">Newsletter Preview</a>
+                <a href="/preferences">Preferences</a>
+            </div>
+            
+            <h1>Newsletter Settings</h1>
+            
+            <div class="section">
+                <h2>Scheduler Status</h2>
+                <div class="status {'running' if scheduler_status['is_running'] else 'stopped'}">
+                    <strong>Status:</strong> {'Running' if scheduler_status['is_running'] else 'Stopped'}<br>
+                    <strong>Schedule:</strong> {scheduler_status['schedule_day'].title()} at {scheduler_status['schedule_time']}<br>
+                    <strong>Next Run:</strong> {scheduler_status.get('next_run', 'Not scheduled') or 'Not scheduled'}
+                </div>
+                
+                <button onclick="startScheduler()">Start Scheduler</button>
+                <button onclick="stopScheduler()" class="danger">Stop Scheduler</button>
+                <button onclick="sendTestNewsletter()">Send Test Newsletter</button>
+                <button onclick="sendNewsletterNow()">Send Newsletter Now</button>
+            </div>
+            
+            <div class="section">
+                <h2>User Settings</h2>
+                <div class="form-group">
+                    <label>Email:</label>
+                    <input type="email" value="{user.email}" readonly style="background: #f5f5f5;">
+                </div>
+                <div class="form-group">
+                    <label>Newsletter Frequency:</label>
+                    <select id="frequency" onchange="updateFrequency()">
+                        <option value="weekly" {'selected' if user.newsletter_frequency == 'weekly' else ''}>Weekly</option>
+                        <option value="daily" {'selected' if user.newsletter_frequency == 'daily' else ''}>Daily</option>
+                        <option value="monthly" {'selected' if user.newsletter_frequency == 'monthly' else ''}>Monthly</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Max Papers per Newsletter:</label>
+                    <input type="number" id="maxPapers" value="{user.max_papers_per_newsletter or 5}" min="1" max="20" onchange="updateMaxPapers()">
+                </div>
+                <div class="form-group">
+                    <label>Include Coding Tips:</label>
+                    <input type="checkbox" id="includeTips" {'checked' if user.include_coding_tips else ''} onchange="updateIncludeTips()">
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>Test Email</h2>
+                <div class="form-group">
+                    <label>Send test newsletter to:</label>
+                    <input type="email" id="testEmail" placeholder="Enter email address" value="{user.email}">
+                    <button onclick="sendTestToEmail()">Send Test</button>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>Schedule Configuration</h2>
+                <div class="form-group">
+                    <label>Day of week:</label>
+                    <select id="scheduleDay">
+                        <option value="monday" {'selected' if scheduler_status['schedule_day'] == 'monday' else ''}>Monday</option>
+                        <option value="tuesday" {'selected' if scheduler_status['schedule_day'] == 'tuesday' else ''}>Tuesday</option>
+                        <option value="wednesday" {'selected' if scheduler_status['schedule_day'] == 'wednesday' else ''}>Wednesday</option>
+                        <option value="thursday" {'selected' if scheduler_status['schedule_day'] == 'thursday' else ''}>Thursday</option>
+                        <option value="friday" {'selected' if scheduler_status['schedule_day'] == 'friday' else ''}>Friday</option>
+                        <option value="saturday" {'selected' if scheduler_status['schedule_day'] == 'saturday' else ''}>Saturday</option>
+                        <option value="sunday" {'selected' if scheduler_status['schedule_day'] == 'sunday' else ''}>Sunday</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Time (24-hour format):</label>
+                    <input type="time" id="scheduleTime" value="{scheduler_status['schedule_time']}">
+                </div>
+                <button onclick="updateSchedule()">Update Schedule</button>
+            </div>
+            
+            <script>
+                async function startScheduler() {{
+                    const response = await fetch('/api/scheduler/start', {{ method: 'POST' }});
+                    const result = await response.json();
+                    alert(result.message);
+                    location.reload();
+                }}
+                
+                async function stopScheduler() {{
+                    const response = await fetch('/api/scheduler/stop', {{ method: 'POST' }});
+                    const result = await response.json();
+                    alert(result.message);
+                    location.reload();
+                }}
+                
+                async function sendTestNewsletter() {{
+                    const response = await fetch('/api/newsletter/send?force_send=true', {{ method: 'POST' }});
+                    const result = await response.json();
+                    alert(result.success ? 'Newsletter sent successfully!' : 'Failed to send newsletter');
+                }}
+                
+                async function sendNewsletterNow() {{
+                    const response = await fetch('/api/newsletter/send?force_send=true', {{ method: 'POST' }});
+                    const result = await response.json();
+                    alert(result.success ? 'Newsletter sent successfully!' : 'Failed to send newsletter');
+                }}
+                
+                async function sendTestToEmail() {{
+                    const email = document.getElementById('testEmail').value;
+                    if (!email) {{
+                        alert('Please enter an email address');
+                        return;
+                    }}
+                    
+                    const response = await fetch(`/api/newsletter/test?email=${{encodeURIComponent(email)}}`, {{ method: 'POST' }});
+                    const result = await response.json();
+                    alert(result.success ? `Test email sent to ${{email}}!` : 'Failed to send test email');
+                }}
+                
+                async function updateSchedule() {{
+                    const day = document.getElementById('scheduleDay').value;
+                    const time = document.getElementById('scheduleTime').value;
+                    
+                    const response = await fetch('/api/scheduler/schedule', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ day, time }})
+                    }});
+                    
+                    const result = await response.json();
+                    alert(result.success ? `Schedule updated to ${{day}} at ${{time}}!` : 'Failed to update schedule');
+                    location.reload();
+                }}
+            </script>
+        </body>
+        </html>
+        """
+        
+        return HTMLResponse(html)
+        
+    except Exception as e:
+        logger.error(f"Newsletter settings page failed: {e}")
+        return HTMLResponse(f"""
+        <html>
+        <body>
+            <h1>Newsletter Settings Error</h1>
+            <p>Error: {e}</p>
+            <a href="/">Back to Home</a>
+        </body>
+        </html>
+        """)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_dashboard(request: Request, db = Depends(get_db_session)):
+    """Admin dashboard for system monitoring and configuration"""
+    
+    try:
+        # Get system statistics
+        user_count = db.query(User).count()
+        paper_count = db.query(Paper).count()
+        
+        # Get recent activity
+        recent_papers = db.query(Paper).order_by(Paper.discovered_at.desc()).limit(5).all()
+        
+        # Get scheduler status
+        scheduler_status = newsletter_scheduler.get_schedule_info()
+        
+        # Calculate some stats
+        processed_papers = db.query(Paper).filter(Paper.is_processed == True).count()
+        processing_rate = (processed_papers / paper_count * 100) if paper_count > 0 else 0
+        
+        html = f"""
+        <html>
+        <head>
+            <title>Admin Dashboard - Research Paper Summarizer</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }}
+                .nav a {{ margin-right: 15px; text-decoration: none; color: #007bff; }}
+                .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0; }}
+                .stat-card {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; }}
+                .stat-number {{ font-size: 2.5em; font-weight: bold; margin: 10px 0; }}
+                .stat-label {{ opacity: 0.9; }}
+                .section {{ border: 1px solid #ddd; padding: 20px; margin: 20px 0; border-radius: 8px; }}
+                .status {{ padding: 10px; border-radius: 5px; margin: 10px 0; }}
+                .status.healthy {{ background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }}
+                .status.unhealthy {{ background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }}
+                .paper-item {{ border: 1px solid #eee; padding: 10px; margin: 5px 0; border-radius: 5px; }}
+                button {{ background: #007bff; color: white; padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }}
+                button:hover {{ background: #0056b3; }}
+                button.danger {{ background: #dc3545; }}
+                button.danger:hover {{ background: #c82333; }}
+                .actions {{ display: flex; gap: 10px; flex-wrap: wrap; }}
+            </style>
+        </head>
+        <body>
+            <div class="nav">
+                <a href="/">Home</a>
+                <a href="/newsletter/settings">Newsletter Settings</a>
+                <a href="/preferences">Preferences</a>
+                <a href="/api/docs">API Docs</a>
+            </div>
+            
+            <h1>Admin Dashboard</h1>
+            
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-number">{user_count}</div>
+                    <div class="stat-label">Total Users</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">{paper_count}</div>
+                    <div class="stat-label">Papers Processed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">{processing_rate:.1f}%</div>
+                    <div class="stat-label">Processing Success Rate</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">{'ON' if scheduler_status['is_running'] else 'OFF'}</div>
+                    <div class="stat-label">Newsletter Scheduler</div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>System Actions</h2>
+                <div class="actions">
+                    <button onclick="sendBulkNewsletters()">Send Newsletters to All Users</button>
+                    <button onclick="startScheduler()">Start Newsletter Scheduler</button>
+                    <button onclick="stopScheduler()" class="danger">Stop Newsletter Scheduler</button>
+                    <button onclick="refreshStats()">Refresh Statistics</button>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>Newsletter Scheduler</h2>
+                <div class="status {'healthy' if scheduler_status['is_running'] else 'unhealthy'}">
+                    <strong>Status:</strong> {'Running' if scheduler_status['is_running'] else 'Stopped'}<br>
+                    <strong>Schedule:</strong> {scheduler_status['schedule_day'].title()} at {scheduler_status['schedule_time']}<br>
+                    <strong>Next Run:</strong> {scheduler_status.get('next_run', 'Not scheduled') or 'Not scheduled'}
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>Recent Papers ({len(recent_papers)})</h2>
+        """
+        
+        for paper in recent_papers:
+            html += f"""
+                <div class="paper-item">
+                    <strong>{paper.title}</strong><br>
+                    <small>Authors: {', '.join(paper.authors) if paper.authors else 'Unknown'}</small><br>
+                    <small>Added: {paper.discovered_at.strftime('%Y-%m-%d %H:%M')}</small><br>
+                    <small>Status: {'Processed' if paper.is_processed else 'Processing'}</small>
+                </div>
+            """
+        
+        html += """
+            </div>
+            
+            <div class="section">
+                <h2>System Health</h2>
+                <div id="healthStatus">Loading...</div>
+                <button onclick="checkHealth()">Check System Health</button>
+            </div>
+            
+            <script>
+                async function sendBulkNewsletters() {
+                    if (!confirm('Send newsletters to all users? This action cannot be undone.')) {
+                        return;
+                    }
+                    
+                    const response = await fetch('/api/admin/send-newsletters', { method: 'POST' });
+                    const result = await response.json();
+                    alert(`Newsletters sent: ${result.sent_count} success, ${result.failed_count} failed`);
+                }
+                
+                async function startScheduler() {
+                    const response = await fetch('/api/scheduler/start', { method: 'POST' });
+                    const result = await response.json();
+                    alert(result.message);
+                    location.reload();
+                }
+                
+                async function stopScheduler() {
+                    const response = await fetch('/api/scheduler/stop', { method: 'POST' });
+                    const result = await response.json();
+                    alert(result.message);
+                    location.reload();
+                }
+                
+                async function refreshStats() {
+                    location.reload();
+                }
+                
+                async function checkHealth() {
+                    const response = await fetch('/health');
+                    const result = await response.json();
+                    
+                    let healthHtml = '<div class="status healthy"><strong>System Health: ' + result.status + '</strong><br>';
+                    healthHtml += '<strong>Services:</strong><ul>';
+                    
+                    for (const [service, status] of Object.entries(result.services)) {
+                        healthHtml += `<li>${service}: ${status}</li>`;
+                    }
+                    
+                    healthHtml += '</ul></div>';
+                    document.getElementById('healthStatus').innerHTML = healthHtml;
+                }
+                
+                // Auto-refresh health on load
+                window.onload = function() {
+                    checkHealth();
+                };
+            </script>
+        </body>
+        </html>
+        """
+        
+        return HTMLResponse(html)
+        
+    except Exception as e:
+        logger.error(f"Admin dashboard failed: {e}")
+        return HTMLResponse(f"""
+        <html>
+        <body>
+            <h1>Admin Dashboard Error</h1>
+            <p>Error: {e}</p>
+            <a href="/">Back to Home</a>
+        </body>
+        </html>
+        """)
+
+
+@app.post("/api/admin/send-newsletters")
+async def admin_send_newsletters(db = Depends(get_db_session)):
+    """Admin endpoint to send newsletters to all users"""
+    
+    try:
+        results = newsletter_scheduler.send_test_newsletters(force_send=True)
+        return results
+        
+    except Exception as e:
+        logger.error(f"Admin newsletter send failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(db = Depends(get_db_session)):
+    """Get comprehensive system statistics"""
+    
+    try:
+        # User statistics
+        user_count = db.query(User).count()
+        users_with_interests = db.query(User).join(DBUserInterest).distinct().count()
+        
+        # Paper statistics
+        paper_count = db.query(Paper).count()
+        processed_papers = db.query(Paper).filter(Paper.is_processed == True).count()
+        papers_this_week = db.query(Paper).filter(
+            Paper.discovered_at >= datetime.utcnow() - timedelta(days=7)
+        ).count()
+        
+        # Newsletter statistics
+        newsletters_sent = db.query(Newsletter).filter(Newsletter.sent_at.isnot(None)).count()
+        
+        # Interest statistics
+        total_interests = db.query(DBUserInterest).count()
+        avg_confidence = db.query(DBUserInterest.confidence_score).scalar() or 0
+        
+        return {
+            "users": {
+                "total": user_count,
+                "with_interests": users_with_interests,
+                "engagement_rate": (users_with_interests / user_count * 100) if user_count > 0 else 0
+            },
+            "papers": {
+                "total": paper_count,
+                "processed": processed_papers,
+                "processing_rate": (processed_papers / paper_count * 100) if paper_count > 0 else 0,
+                "this_week": papers_this_week
+            },
+            "newsletters": {
+                "total_sent": newsletters_sent
+            },
+            "interests": {
+                "total": total_interests,
+                "avg_confidence": avg_confidence
+            },
+            "scheduler": newsletter_scheduler.get_schedule_info()
+        }
+        
+    except Exception as e:
+        logger.error(f"Admin stats failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/newsletter/preview")
+async def newsletter_preview_api(user: User = Depends(get_current_user)):
+    """Get newsletter preview via API"""
+    
+    try:
+        preview = newsletter_service.generate_newsletter_preview(user.id)
+        return preview
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/newsletter/send")
+async def send_newsletter_now(
+    user_id: Optional[int] = None,
+    force_send: bool = False,
+    user: User = Depends(get_current_user)
+):
+    """Send newsletter immediately to user or all users"""
+    
+    try:
+        if user_id:
+            # Send to specific user
+            success = newsletter_scheduler.send_newsletter_to_user(user_id, force_send)
+            return {"success": success, "user_id": user_id}
+        else:
+            # Send to current user
+            success = email_service.send_newsletter(user, force_send)
+            return {"success": success, "user_id": user.id}
+            
+    except Exception as e:
+        logger.error(f"Newsletter send API failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/newsletter/test")
+async def send_test_newsletter(
+    email: str,
+    user: User = Depends(get_current_user)
+):
+    """Send test newsletter to specified email"""
+    
+    try:
+        success = email_service.send_test_email(email)
+        return {"success": success, "email": email}
+        
+    except Exception as e:
+        logger.error(f"Test newsletter API failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/scheduler/status")
+async def get_scheduler_status():
+    """Get newsletter scheduler status"""
+    
+    try:
+        status = newsletter_scheduler.get_schedule_info()
+        return status
+        
+    except Exception as e:
+        logger.error(f"Scheduler status API failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/scheduler/start")
+async def start_scheduler():
+    """Start the automated newsletter scheduler"""
+    
+    try:
+        newsletter_scheduler.start_scheduler()
+        return {"success": True, "message": "Newsletter scheduler started"}
+        
+    except Exception as e:
+        logger.error(f"Scheduler start API failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/scheduler/stop")
+async def stop_scheduler():
+    """Stop the automated newsletter scheduler"""
+    
+    try:
+        newsletter_scheduler.stop_scheduler()
+        return {"success": True, "message": "Newsletter scheduler stopped"}
+        
+    except Exception as e:
+        logger.error(f"Scheduler stop API failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/scheduler/schedule")
+async def update_schedule(
+    day: str,
+    time: str
+):
+    """Update the newsletter schedule"""
+    
+    try:
+        newsletter_scheduler.update_schedule(day, time)
+        return {"success": True, "day": day, "time": time}
+        
+    except Exception as e:
+        logger.error(f"Schedule update API failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -777,7 +1399,10 @@ async def health_check():
             "pdf_extractor": "ready",
             "preference_learner": "ready", 
             "arxiv_service": "ready",
-            "tip_generator": "ready"
+            "tip_generator": "ready",
+            "newsletter_service": "ready",
+            "email_service": "ready",
+            "scheduler": "ready"
         }
     }
 
