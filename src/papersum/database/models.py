@@ -44,6 +44,24 @@ class User(Base):
     uploaded_papers = relationship("Paper", back_populates = "uploaded_by")
     newsletters = relationship("Newsletter", back_populates = "user")
     interests = relationship("ResearchTopic", secondary = user_interests, back_populates = "interested_users")
+    learned_interests = relationship("UserInterest", back_populates = "user")
+
+
+class UserInterest(Base):
+    """User's learned interests from uploaded papers"""
+    __tablename__ = 'user_interests_learned'
+    
+    id = Column(Integer, primary_key = True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable = False)
+    
+    topic = Column(String(500), nullable = False)
+    keywords = Column(JSON)  # List of keywords
+    confidence_score = Column(Float, default = 0.5)
+    paper_count = Column(Integer, default = 1)
+    last_seen = Column(DateTime, default = datetime.utcnow)
+    created_at = Column(DateTime, default = datetime.utcnow)
+    
+    user = relationship("User", back_populates = "learned_interests")
 
 
 class ResearchTopic(Base):
@@ -114,7 +132,7 @@ class CodingTip(Base):
     title = Column(String(255), nullable = False)
     content = Column(Text, nullable = False)
 
-    categoy = Column(String(100))
+    category = Column(String(100))
     difficulty_level = Column(String(50))
     tags = Column(JSON)
 
@@ -132,6 +150,35 @@ class CodingTip(Base):
 
 
 class Newsletter(Base):
+    __tablename__ = 'newsletters'
+
+    id = Column(UUID(as_uuid = True), primary_key = True, default = lambda: str(uuid.uuid4()))
+    user_id = Column(Integer, ForeignKey('users.id'))
+    
+    title = Column(String(255))
+    generated_at = Column(DateTime, default = datetime.utcnow)
+    sent_at = Column(DateTime)
+    
+    user = relationship("User", back_populates = "newsletters")
+    included_papers = relationship("NewsletterPaper", back_populates = "newsletter")
+    included_tips = relationship("NewsletterTip", back_populates = "newsletter")
+
+
+class NewsletterPaper(Base):
+    __tablename__ = 'newsletter_papers'
+    
+    id = Column(Integer, primary_key = True)
+    newsletter_id = Column(UUID(as_uuid = True), ForeignKey('newsletters.id'))
+    paper_id = Column(UUID(as_uuid = True), ForeignKey('papers.id'))
+    
+    display_order = Column(Integer)
+    custom_summary = Column(Text)
+    
+    newsletter = relationship("Newsletter", back_populates = "included_papers")
+    paper = relationship("Paper", back_populates = "newsletter_inclusions")
+
+
+class NewsletterTip(Base):
     __tablename__ = 'newsletter_tips'
 
     id = Column(Integer, primary_key = True)
