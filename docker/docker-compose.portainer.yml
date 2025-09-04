@@ -1,0 +1,102 @@
+version: '3.8'
+
+# Portainer stack file for Raspberry Pi deployment
+# Optimized for ARM64 architecture and limited resources
+
+services:
+  # Main application
+  papersum:
+    image: papersum:raspberry-pi
+    container_name: papersum-rpi
+    ports:
+      - "8000:8000"
+    environment:
+      # Database
+      - DATABASE_URL=sqlite:///app/data/research_papers.db
+      
+      # Grobid connection
+      - PAPERSUM_GROBID__HOST=grobid
+      - PAPERSUM_GROBID__PORT=8070
+      - PAPERSUM_GROBID__TIMEOUT=180
+      
+      # AI Models - optimized for ARM/low memory
+      - USE_LOCAL_MODELS=true
+      - DEVICE=cpu
+      - USE_LIGHTWEIGHT=true
+      - MAX_MODEL_MEMORY=512m
+      
+      # Email configuration
+      - SMTP_SERVER=${SMTP_SERVER:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - FROM_EMAIL=${FROM_EMAIL:-}
+      - FROM_NAME=${FROM_NAME:-Research Paper Digest}
+      - SMTP_TLS=${SMTP_TLS:-true}
+      
+      # Resource constraints for Pi
+      - WORKER_CONNECTIONS=50
+      - MAX_CONCURRENT_REQUESTS=5
+      - REQUEST_TIMEOUT=300
+      
+    volumes:
+      - papersum_data:/app/data
+      - model_cache:/root/.cache/papersum/models
+    depends_on:
+      - grobid
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    networks:
+      - papersum-rpi-network
+
+  # Grobid PDF processing service (ARM64 compatible)
+  grobid:
+    image: lfoppiano/grobid:0.8.0
+    container_name: grobid-rpi
+    expose:
+      - "8070"
+    environment:
+      # Minimal memory for Raspberry Pi
+      - JAVA_OPTS=-Xmx1g -Djava.awt.headless=true
+    volumes:
+      - grobid_data:/opt/grobid/grobid-home/models
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8070/api/isalive"]
+      interval: 45s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+    networks:
+      - papersum-rpi-network
+
+volumes:
+  papersum_data:
+    driver: local
+  grobid_data:
+    driver: local
+  model_cache:
+    driver: local
+
+networks:
+  papersum-rpi-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

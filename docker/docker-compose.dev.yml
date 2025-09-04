@@ -36,7 +36,7 @@ services:
     ports:
       - "8070:8070"  # Expose for external testing
     environment:
-      - JAVA_OPTS=-Xmx2g  # Less memory for development
+      - JAVA_OPTS=-Xmx512m  # Minimal memory for Raspberry Pi
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8070/api/isalive"]

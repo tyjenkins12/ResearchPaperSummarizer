@@ -1,3 +1,5 @@
+import os
+import platform
 from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -7,7 +9,13 @@ from pydantic_settings import BaseSettings
 class ModelConfig(BaseModel):
     sentence_transformer_model: str = "all-MiniLM-L6-v2"
 
-    abstractive_model: str = "facebook/bart-large-cnn"
+    # ARM/lightweight model selection
+    @property
+    def abstractive_model(self) -> str:
+        if os.getenv("USE_LIGHTWEIGHT", "false").lower() == "true" or platform.machine() in ["aarch64", "arm64"]:
+            return "t5-small"  # 240MB, ARM-optimized
+        return "facebook/bart-large-cnn"  # 1.6GB, full performance
+    
     max_summary_length: int = 512
     min_summary_length: int = 100
 

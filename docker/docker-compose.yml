@@ -49,7 +49,7 @@ services:
     expose:
       - "8070"
     environment:
-      - JAVA_OPTS=-Xmx4g
+      - JAVA_OPTS=-Xmx1g
     volumes:
       - grobid_data:/opt/grobid/grobid-home/models
     restart: unless-stopped
