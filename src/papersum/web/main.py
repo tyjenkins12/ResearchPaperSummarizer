@@ -9,22 +9,36 @@ import logging
 from pathlib import Path
 import tempfile
 import shutil
-from datetime import datetime
+from datetime import date, datetime
+import uuid
+import numpy as np
 
-from ..database.models import User, Paper, UserInterest as DBUserInterest
+from ..database.models import (
+    User,
+    Paper,
+    UserInterest as DBUserInterest,
+    DailyHeadline,
+    WeeklyReport,
+    WeeklyReportPaper,
+    FeedInteraction,
+)
 from ..database.session import get_db_session
-from ..parse.pdf_extractor import PDFExtractor
+from ..parse.pdf_extractor import PDFExtractor, ExtractedPaper
 from ..config.settings import settings
-from ..intelligence.preference_learner import PreferenceLearner, UserInterest
-from ..scraping.arxiv_monitor import ArxivMonitoringService
+from ..intelligence.preference_learner import UserInterest
 from ..newsletter.tip_generator import AutoTipGenerator
 from ..newsletter.coding_tips import CodingTipsManager
 from ..newsletter.generator import NewsletterService
 from ..newsletter.email_service import EmailService
 from ..newsletter.scheduler import get_newsletter_scheduler, start_newsletter_automation
+from ..feed import FeedAggregator
+from ..feed.scheduler import get_feed_scheduler
+from ..utils.service_registry import get_arxiv_service, get_preference_learner
 from .schemas import (
     UserCreate, UserResponse, PaperResponse, 
-    InterestResponse, FeedbackRequest, PreferencesResponse
+    InterestResponse, FeedbackRequest, PreferencesResponse,
+    DailyFeedResponse, WeeklyFeedResponse, FeedHeadline, WeeklyReportItem,
+    FeedFeedbackRequest
 )
 
 logger = logging.getLogger(__name__)
@@ -58,12 +72,17 @@ if template_dir.exists() and (template_dir / "index.html").exists():
 
 # Global services (in production, use dependency injection)
 pdf_extractor = PDFExtractor()
-preference_learner = PreferenceLearner()
-arxiv_service = ArxivMonitoringService()
+preference_learner = get_preference_learner()
+arxiv_service = None if settings.feed.offline_mode else get_arxiv_service()
 tip_generator = AutoTipGenerator()
 newsletter_service = NewsletterService()
 email_service = EmailService()
 newsletter_scheduler = get_newsletter_scheduler()
+feed_aggregator = FeedAggregator(
+    arxiv_service=arxiv_service,
+    preference_learner=preference_learner,
+)
+feed_scheduler = get_feed_scheduler()
 
 
 # Dependency to get current user (simplified - no auth for now)
@@ -80,6 +99,65 @@ async def get_current_user(db = Depends(get_db_session)) -> User:
         db.commit()
         db.refresh(user)
     return user
+
+
+def _parse_iso_date(value: Optional[str]) -> Optional[date]:
+    """Parse an ISO date string (YYYY-MM-DD)."""
+
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.") from exc
+
+
+def _convert_db_interests(db_interests: List[DBUserInterest]) -> List[UserInterest]:
+    """Convert stored interests into dataclasses with embeddings."""
+
+    interests: List[UserInterest] = []
+    encoder = preference_learner.encoder
+    dimension_getter = getattr(encoder, "get_sentence_embedding_dimension", None)
+    embedding_dim = dimension_getter() if callable(dimension_getter) else 384
+
+    for db_interest in db_interests:
+        keywords = db_interest.keywords or []
+        seed_text = " ".join(keywords) or db_interest.topic
+        if seed_text:
+            embedding = encoder.encode([seed_text])[0]
+        else:
+            embedding = np.zeros(embedding_dim, dtype=float)
+
+        interests.append(
+            UserInterest(
+                topic=db_interest.topic,
+                keywords=keywords,
+                embedding=embedding,
+                confidence_score=db_interest.confidence_score or 0.5,
+                paper_count=db_interest.paper_count or 0,
+                last_seen=db_interest.last_seen or datetime.utcnow(),
+            )
+        )
+
+    return interests
+
+
+def _paper_to_extracted(paper: Paper) -> ExtractedPaper:
+    """Convert a Paper ORM object into ExtractedPaper structure."""
+
+    return ExtractedPaper(
+        title=paper.title,
+        abstract=paper.abstract or "",
+        authors=paper.authors or [],
+        sections=[],
+        full_text=paper.full_text or "",
+        metadata={
+            "relevance_score": paper.relevance_score or 0.0,
+            "arxiv_id": paper.arxiv_id,
+            "pdf_url": paper.pdf_url or paper.source_url,
+            "source": paper.source,
+        },
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -103,6 +181,7 @@ async def home(request: Request):
         <body>
             <h1>Research Paper Summarizer</h1>
             <div class="nav">
+                <a href="/feed">Daily Feed</a>
                 <a href="/upload">Upload Papers</a>
                 <a href="/preferences">My Preferences</a>
                 <a href="/discover">Discover Papers</a>
@@ -146,6 +225,151 @@ async def home(request: Request):
         """)
 
 
+@app.get("/feed", response_class=HTMLResponse)
+async def feed_dashboard(
+    request: Request,
+    refresh: bool = False,
+    user: User = Depends(get_current_user),
+    db = Depends(get_db_session)
+):
+    """Render the in-app feed with daily TL;DR and weekly highlights."""
+
+    try:
+        generated_daily = feed_aggregator.generate_daily_headlines(
+            db,
+            user.id,
+            refresh=refresh,
+        )
+        generated_weekly = feed_aggregator.generate_weekly_report(
+            db,
+            user.id,
+            refresh=refresh,
+        )
+
+        daily_items = [
+            {
+                "title": item.headline.title,
+                "summary": item.headline.summary,
+                "rank": item.headline.rank,
+                "metadata": item.headline.extra_metadata or {},
+                "paper_url": (item.headline.extra_metadata or {}).get("pdf_url")
+                or (item.paper.pdf_url if item.paper else None),
+            }
+            for item in generated_daily
+        ]
+
+        weekly_data = None
+        if generated_weekly:
+            weekly_data = {
+                "title": f"Highlights for {generated_weekly.report.week_start:%b %d} - {generated_weekly.report.week_end:%b %d}",
+                "summary": generated_weekly.report.summary,
+                "items": [
+                    {
+                        "headline": entry.headline,
+                        "summary": entry.summary,
+                        "metadata": entry.extra_metadata or {},
+                        "paper_id": entry.paper_id,
+                    }
+                    for entry in generated_weekly.papers
+                ],
+            }
+
+        context = {
+            "request": request,
+            "user": user,
+            "daily_date": generated_daily[0].headline.headline_date if generated_daily else date.today(),
+            "daily_items": daily_items,
+            "weekly": weekly_data,
+        }
+
+        if templates and (template_dir / "feed.html").exists():
+            return templates.TemplateResponse("feed.html", context)
+
+        daily_html = "".join(
+            [
+                f"""
+                <div class=\"card\">
+                    <div class=\"rank\">#{item['rank']}</div>
+                    <h3>{item['title']}</h3>
+                    <p>{item['summary']}</p>
+                    {f'<a href="{item["paper_url"]}" target="_blank">Read paper →</a>' if item['paper_url'] else ''}
+                </div>
+                """
+                for item in daily_items
+            ]
+        ) or "<p>No headlines yet. Upload papers or adjust your preferences to get started.</p>"
+
+        weekly_html = ""
+        if weekly_data:
+            weekly_items_html = "".join(
+                [
+                    f"""
+                    <div class=\"card\">
+                        <h3>{i + 1}. {entry['headline']}</h3>
+                        <p>{entry['summary']}</p>
+                    </div>
+                    """
+                    for i, entry in enumerate(weekly_data["items"])
+                ]
+            )
+            weekly_html = f"""
+                <section>
+                    <h2>Weekly Highlights</h2>
+                    <p>{weekly_data.get('summary') or 'Top papers from the last week tailored to your interests.'}</p>
+                    {weekly_items_html}
+                </section>
+            """
+
+        html = f"""
+        <html>
+        <head>
+            <title>Your Research Feed</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }}
+                .nav a {{ margin-right: 15px; text-decoration: none; color: #007bff; }}
+                .header {{ margin: 20px 0; }}
+                .card {{ border: 1px solid #ddd; padding: 15px; margin: 15px 0; border-radius: 8px; background: #f8f9fa; }}
+                .rank {{ font-weight: bold; color: #764ba2; margin-bottom: 8px; }}
+                h2 {{ border-bottom: 2px solid #eee; padding-bottom: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class="nav">
+                <a href="/">Home</a>
+                <a href="/feed">Daily Feed</a>
+                <a href="/upload">Upload Papers</a>
+                <a href="/preferences">Preferences</a>
+                <a href="/discover">Discover Papers</a>
+            </div>
+
+            <div class="header">
+                <h1>Daily TL;DR</h1>
+                <p>{context['daily_date']:%A, %B %d, %Y}</p>
+            </div>
+
+            {daily_html}
+            {weekly_html}
+        </body>
+        </html>
+        """
+
+        return HTMLResponse(html)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Feed dashboard failed: {exc}")
+        return HTMLResponse(
+            """
+            <html>
+            <body>
+                <h1>Feed Error</h1>
+                <p>Unable to generate your personalized feed right now. Please try again later.</p>
+            </body>
+            </html>
+            """,
+            status_code=500,
+        )
 @app.get("/upload", response_class=HTMLResponse)
 async def upload_page(request: Request):
     """Paper upload page"""
@@ -169,6 +393,7 @@ async def upload_page(request: Request):
         <body>
             <div class="nav">
                 <a href="/">Home</a>
+                <a href="/feed">Daily Feed</a>
                 <a href="/preferences">Preferences</a>
                 <a href="/discover">Discover</a>
             </div>
@@ -233,7 +458,6 @@ async def upload_papers(
                 authors=extracted_paper.authors,
                 abstract=extracted_paper.abstract,
                 full_text=extracted_paper.full_text,
-                metadata=extracted_paper.metadata,
                 uploaded_by_user_id=user.id,
                 discovered_at=datetime.utcnow(),
                 processed_at=datetime.utcnow()
@@ -287,7 +511,12 @@ async def update_user_preferences(user_id: int, db):
                     abstract=paper.abstract or "",
                     sections=[],
                     full_text=paper.full_text or "",
-                    metadata=paper.metadata or {}
+                    metadata={
+                        "relevance_score": paper.relevance_score or 0.0,
+                        "arxiv_id": paper.arxiv_id,
+                        "pdf_url": paper.pdf_url or paper.source_url,
+                        "source": paper.source,
+                    }
                 )
                 extracted_papers.append(extracted_paper)
             
@@ -409,11 +638,11 @@ async def discover_page(
     
     # Discover relevant papers
     try:
-        discovered_papers = arxiv_service.discover_relevant_papers(
-            user_interests=user_interests,
+        discovered_papers = feed_aggregator.discover_candidates(
+            session=db,
+            user_id=user.id,
             max_papers=10,
             days_back=14,
-            include_trending=True
         )
         
         papers_html = ""
@@ -499,17 +728,7 @@ async def submit_feedback(
         db_interests = db.query(DBUserInterest).filter(DBUserInterest.user_id == user.id).all()
         
         # Convert to UserInterest format for preference learner
-        user_interests = []
-        for db_interest in db_interests:
-            user_interest = UserInterest(
-                topic=db_interest.topic,
-                keywords=db_interest.keywords,
-                embedding=None,
-                confidence_score=db_interest.confidence_score,
-                paper_count=db_interest.paper_count,
-                last_seen=db_interest.last_seen
-            )
-            user_interests.append(user_interest)
+        user_interests = _convert_db_interests(db_interests)
         
         # Create feedback data (simplified - you'd normally fetch the actual paper)
         paper_ratings = {paper_id: rating}
@@ -591,7 +810,12 @@ async def get_user_papers(
             abstract=paper.abstract,
             relevance_score=paper.relevance_score,
             discovered_at=paper.discovered_at,
-            metadata=paper.metadata or {}
+            metadata={
+                "arxiv_id": paper.arxiv_id,
+                "pdf_url": paper.pdf_url,
+                "source": paper.source,
+                "source_url": paper.source_url,
+            },
         )
         for paper in papers
     ]
@@ -624,13 +848,13 @@ async def discover_papers_api(
             user_interests.append(user_interest)
         
         # Discover papers
-        discovered_papers = arxiv_service.discover_relevant_papers(
-            user_interests=user_interests,
+        discovered_papers = feed_aggregator.discover_candidates(
+            session=db,
+            user_id=user.id,
             max_papers=max_papers,
             days_back=days_back,
-            include_trending=include_trending
         )
-        
+
         return {
             "discovered_papers": len(discovered_papers),
             "papers": [
@@ -650,6 +874,215 @@ async def discover_papers_api(
     except Exception as e:
         logger.error(f"Paper discovery API failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/feed/daily", response_model=DailyFeedResponse)
+async def api_daily_feed(
+    headline_date: Optional[str] = None,
+    refresh: bool = False,
+    user: User = Depends(get_current_user),
+    db = Depends(get_db_session)
+):
+    """Return the personalized daily TL;DR feed."""
+
+    target_date = _parse_iso_date(headline_date) or date.today()
+
+    generated = feed_aggregator.generate_daily_headlines(
+        db,
+        user.id,
+        headline_date=target_date,
+        refresh=refresh,
+    )
+
+    items = [
+        FeedHeadline(
+            id=item.headline.id,
+            title=item.headline.title,
+            summary=item.headline.summary,
+            rank=item.headline.rank,
+            metadata=item.headline.extra_metadata or {},
+            paper_id=item.paper.id if item.paper else None,
+            paper_title=item.paper.title if item.paper else None,
+            paper_url=(item.headline.extra_metadata or {}).get("pdf_url")
+            or (item.paper.pdf_url if item.paper else None),
+        )
+        for item in generated
+    ]
+
+    return DailyFeedResponse(
+        date=target_date,
+        items=items,
+    )
+
+
+@app.get("/api/feed/weekly", response_model=WeeklyFeedResponse)
+async def api_weekly_feed(
+    week_start: Optional[str] = None,
+    refresh: bool = False,
+    user: User = Depends(get_current_user),
+    db = Depends(get_db_session)
+):
+    """Return the personalized weekly highlight report."""
+
+    target_week = _parse_iso_date(week_start)
+
+    generated = feed_aggregator.generate_weekly_report(
+        db,
+        user.id,
+        week_start=target_week,
+        refresh=refresh,
+    )
+
+    if not generated:
+        raise HTTPException(status_code=404, detail="Weekly report not available")
+
+    report = generated.report
+    items = [
+        WeeklyReportItem(
+            id=entry.id,
+            headline=entry.headline,
+            summary=entry.summary,
+            metadata=entry.extra_metadata or {},
+            paper_id=entry.paper_id,
+        )
+        for entry in generated.papers
+    ]
+
+    return WeeklyFeedResponse(
+        id=report.id,
+        week_start=report.week_start,
+        week_end=report.week_end,
+        summary=report.summary,
+        metadata=report.extra_metadata or {},
+        items=items,
+    )
+
+
+@app.post("/api/feed/feedback")
+async def api_feed_feedback(
+    payload: FeedFeedbackRequest,
+    user: User = Depends(get_current_user),
+    db = Depends(get_db_session)
+):
+    """Capture likes/dislikes/requests from the feed."""
+
+    value = None
+    if payload.rating is not None:
+        value = float(payload.rating)
+    elif payload.interaction_type == "like":
+        value = 5.0
+    elif payload.interaction_type == "dislike":
+        value = 1.0
+
+    interaction = FeedInteraction(
+        user_id=user.id,
+        interaction_type=payload.interaction_type,
+        value=value,
+        note=payload.note,
+        extra_metadata={
+            "target_type": payload.target_type,
+        },
+    )
+
+    paper_record: Optional[Paper] = None
+
+    if payload.target_type == "headline":
+        try:
+            headline_id = int(payload.target_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Headline id must be an integer") from exc
+
+        headline = (
+            db.query(DailyHeadline)
+            .filter(DailyHeadline.id == headline_id, DailyHeadline.user_id == user.id)
+            .first()
+        )
+        if not headline:
+            raise HTTPException(status_code=404, detail="Headline not found")
+
+        interaction.headline_id = headline.id
+        interaction.paper_id = headline.paper_id
+        if headline.paper_id:
+            paper_record = db.query(Paper).filter(Paper.id == headline.paper_id).first()
+
+    elif payload.target_type == "weekly_item":
+        try:
+            item_id = int(payload.target_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Weekly item id must be an integer") from exc
+
+        entry = (
+            db.query(WeeklyReportPaper)
+            .join(WeeklyReport, WeeklyReportPaper.weekly_report_id == WeeklyReport.id)
+            .filter(WeeklyReportPaper.id == item_id, WeeklyReport.user_id == user.id)
+            .first()
+        )
+        if not entry:
+            raise HTTPException(status_code=404, detail="Weekly report item not found")
+
+        interaction.weekly_report_id = entry.weekly_report_id
+        interaction.paper_id = entry.paper_id
+        if entry.paper_id:
+            paper_record = db.query(Paper).filter(Paper.id == entry.paper_id).first()
+
+    elif payload.target_type == "weekly_report":
+        try:
+            report_id = uuid.UUID(payload.target_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Weekly report id must be a UUID") from exc
+
+        report = (
+            db.query(WeeklyReport)
+            .filter(WeeklyReport.id == report_id, WeeklyReport.user_id == user.id)
+            .first()
+        )
+        if not report:
+            raise HTTPException(status_code=404, detail="Weekly report not found")
+
+        interaction.weekly_report_id = report.id
+
+    elif payload.target_type == "paper":
+        try:
+            paper_id = uuid.UUID(payload.target_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Paper id must be a UUID") from exc
+
+        paper_record = db.query(Paper).filter(Paper.id == paper_id).first()
+        if not paper_record:
+            raise HTTPException(status_code=404, detail="Paper not found")
+        interaction.paper_id = paper_record.id
+
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported target type")
+
+    db.add(interaction)
+
+    # Update preference signals when we have a rated paper
+    if paper_record and value is not None:
+        db_interests = db.query(DBUserInterest).filter(DBUserInterest.user_id == user.id).all()
+        if db_interests:
+            interests = _convert_db_interests(db_interests)
+            paper_key = str(paper_record.id)
+            extracted = _paper_to_extracted(paper_record)
+
+            updated_interests = preference_learner.update_interests_from_feedback(
+                interests,
+                {paper_key: int(round(value))},
+                {paper_key: extracted},
+            )
+
+            for db_interest, updated in zip(db_interests, updated_interests):
+                db_interest.confidence_score = updated.confidence_score
+                db_interest.last_seen = updated.last_seen
+
+    db.commit()
+    db.refresh(interaction)
+
+    return {
+        "success": True,
+        "interaction_id": interaction.id,
+        "value": interaction.value,
+    }
 
 
 @app.get("/api/tips")
@@ -689,7 +1122,12 @@ async def get_coding_tips(
                 abstract=paper.abstract or "",
                 sections=[],
                 full_text=paper.full_text or "",
-                metadata=paper.metadata or {}
+                metadata={
+                    "relevance_score": paper.relevance_score or 0.0,
+                    "arxiv_id": paper.arxiv_id,
+                    "pdf_url": paper.pdf_url or paper.source_url,
+                    "source": paper.source,
+                }
             )
             extracted_papers.append(extracted_paper)
         
@@ -804,6 +1242,7 @@ async def newsletter_preview(
         <body>
             <div class="nav">
                 <a href="/">Home</a>
+                <a href="/feed">Daily Feed</a>
                 <a href="/preferences">Preferences</a>
                 <a href="/discover">Discover</a>
             </div>
@@ -870,6 +1309,7 @@ async def newsletter_settings_page(
     try:
         # Get scheduler status
         scheduler_status = newsletter_scheduler.get_schedule_info()
+        feed_status = feed_scheduler.status()
         
         html = f"""
         <html>
@@ -894,6 +1334,7 @@ async def newsletter_settings_page(
         <body>
             <div class="nav">
                 <a href="/">Home</a>
+                <a href="/feed">Daily Feed</a>
                 <a href="/newsletter/preview">Newsletter Preview</a>
                 <a href="/preferences">Preferences</a>
             </div>
@@ -1086,6 +1527,7 @@ async def admin_dashboard(request: Request, db = Depends(get_db_session)):
         <body>
             <div class="nav">
                 <a href="/">Home</a>
+                <a href="/feed">Daily Feed</a>
                 <a href="/newsletter/settings">Newsletter Settings</a>
                 <a href="/preferences">Preferences</a>
                 <a href="/api/docs">API Docs</a>
@@ -1110,6 +1552,10 @@ async def admin_dashboard(request: Request, db = Depends(get_db_session)):
                     <div class="stat-number">{'ON' if scheduler_status['is_running'] else 'OFF'}</div>
                     <div class="stat-label">Newsletter Scheduler</div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-number">{'ON' if feed_status['is_running'] else 'OFF'}</div>
+                    <div class="stat-label">Feed Scheduler</div>
+                </div>
             </div>
             
             <div class="section">
@@ -1118,6 +1564,10 @@ async def admin_dashboard(request: Request, db = Depends(get_db_session)):
                     <button onclick="sendBulkNewsletters()">Send Newsletters to All Users</button>
                     <button onclick="startScheduler()">Start Newsletter Scheduler</button>
                     <button onclick="stopScheduler()" class="danger">Stop Newsletter Scheduler</button>
+                    <button onclick="startFeedScheduler()">Start Feed Scheduler</button>
+                    <button onclick="stopFeedScheduler()" class="danger">Stop Feed Scheduler</button>
+                    <button onclick="runDailyFeed()">Run Daily Feed Now</button>
+                    <button onclick="runWeeklyFeed()">Run Weekly Highlights Now</button>
                     <button onclick="refreshStats()">Refresh Statistics</button>
                 </div>
             </div>
@@ -1128,6 +1578,15 @@ async def admin_dashboard(request: Request, db = Depends(get_db_session)):
                     <strong>Status:</strong> {'Running' if scheduler_status['is_running'] else 'Stopped'}<br>
                     <strong>Schedule:</strong> {scheduler_status['schedule_day'].title()} at {scheduler_status['schedule_time']}<br>
                     <strong>Next Run:</strong> {scheduler_status.get('next_run', 'Not scheduled') or 'Not scheduled'}
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>Feed Scheduler</h2>
+                <div class="status {'healthy' if feed_status['is_running'] else 'unhealthy'}">
+                    <strong>Status:</strong> {'Running' if feed_status['is_running'] else 'Stopped'}<br>
+                    <strong>Daily Headlines:</strong> {feed_status['daily_time']}<br>
+                    <strong>Weekly Highlights:</strong> {feed_status['weekly_day'].title()} at {feed_status['weekly_time']}
                 </div>
             </div>
             
@@ -1177,6 +1636,32 @@ async def admin_dashboard(request: Request, db = Depends(get_db_session)):
                     const result = await response.json();
                     alert(result.message);
                     location.reload();
+                }
+
+                async function startFeedScheduler() {
+                    const response = await fetch('/api/feed/scheduler/start', { method: 'POST' });
+                    const result = await response.json();
+                    alert(result.success ? 'Feed scheduler started' : 'Unable to start feed scheduler');
+                    location.reload();
+                }
+
+                async function stopFeedScheduler() {
+                    const response = await fetch('/api/feed/scheduler/stop', { method: 'POST' });
+                    const result = await response.json();
+                    alert(result.success ? 'Feed scheduler stopped' : 'Unable to stop feed scheduler');
+                    location.reload();
+                }
+
+                async function runDailyFeed() {
+                    const response = await fetch('/api/feed/scheduler/run-daily', { method: 'POST' });
+                    const result = await response.json();
+                    alert(`Daily feed generated for ${result.generated} users`);
+                }
+
+                async function runWeeklyFeed() {
+                    const response = await fetch('/api/feed/scheduler/run-weekly', { method: 'POST' });
+                    const result = await response.json();
+                    alert(`Weekly highlights generated for ${result.generated} users`);
                 }
                 
                 async function refreshStats() {
@@ -1374,6 +1859,61 @@ async def stop_scheduler():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/feed/scheduler/status")
+async def feed_scheduler_status():
+    """Get status of the feed automation scheduler."""
+
+    return feed_scheduler.status()
+
+
+@app.post("/api/feed/scheduler/start")
+async def start_feed_scheduler():
+    """Start feed automation job."""
+
+    try:
+        feed_scheduler.start()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Feed scheduler start failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/feed/scheduler/stop")
+async def stop_feed_scheduler():
+    """Stop feed automation job."""
+
+    try:
+        feed_scheduler.stop()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Feed scheduler stop failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/feed/scheduler/run-daily")
+async def run_daily_feed_now():
+    """Trigger daily feed generation immediately."""
+
+    try:
+        result = feed_scheduler.run_daily_now(refresh=True)
+        return {"success": True, **result}
+    except Exception as e:
+        logger.error(f"Manual daily feed run failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/feed/scheduler/run-weekly")
+async def run_weekly_feed_now():
+    """Trigger weekly highlight generation immediately."""
+
+    try:
+        result = feed_scheduler.run_weekly_now(refresh=True)
+        return {"success": True, **result}
+    except Exception as e:
+        logger.error(f"Manual weekly feed run failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/scheduler/schedule")
 async def update_schedule(
     day: str,
@@ -1411,7 +1951,7 @@ async def health_check():
             "pdf_extractor": "ready",
             "grobid": grobid_status,
             "preference_learner": "ready", 
-            "arxiv_service": "ready",
+            "arxiv_service": "offline" if settings.feed.offline_mode else "ready",
             "tip_generator": "ready",
             "newsletter_service": "ready",
             "email_service": "ready",

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, Float, Boolean, ForeignKey, Table, JSON, Index
+    Column, Integer, String, Text, DateTime, Date, Float, Boolean, ForeignKey, Table, JSON, Index
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, Mapped
@@ -45,6 +45,9 @@ class User(Base):
     newsletters = relationship("Newsletter", back_populates = "user")
     interests = relationship("ResearchTopic", secondary = user_interests, back_populates = "interested_users")
     learned_interests = relationship("UserInterest", back_populates = "user")
+    daily_headlines = relationship("DailyHeadline", back_populates = "user", cascade="all, delete-orphan")
+    weekly_reports = relationship("WeeklyReport", back_populates = "user", cascade="all, delete-orphan")
+    feed_interactions = relationship("FeedInteraction", back_populates = "user", cascade="all, delete-orphan")
 
 
 class UserInterest(Base):
@@ -95,7 +98,6 @@ class Paper(Base):
     full_text = Column(Text)
     pdf_url = Column(String(500))
     pdf_path = Column(String(500))
-
     extractive_summary = Column(Text)
     abstractive_summary = Column(Text)
     hybrid_summary = Column(Text)
@@ -117,6 +119,8 @@ class Paper(Base):
     topics = relationship("ResearchTopic", secondary = paper_topics, back_populates = "papers")
     uploaded_by = relationship("User", back_populates = "uploaded_papers")
     newsletter_inclusions = relationship("NewsletterPaper", back_populates = "paper")
+    weekly_report_entries = relationship("WeeklyReportPaper", back_populates = "paper")
+    headline_entries = relationship("DailyHeadline", back_populates = "paper")
 
     __table_args__ = (
         Index('idx_paper_relevance', 'relevance_score'),
@@ -152,7 +156,7 @@ class CodingTip(Base):
 class Newsletter(Base):
     __tablename__ = 'newsletters'
 
-    id = Column(UUID(as_uuid = True), primary_key = True, default = lambda: str(uuid.uuid4()))
+    id = Column(UUID(as_uuid = True), primary_key = True, default = uuid.uuid4)
     user_id = Column(Integer, ForeignKey('users.id'))
     
     title = Column(String(255))
@@ -227,3 +231,88 @@ class ProcessingJob(Base):
     created_at = Column(DateTime, default = datetime.utcnow)
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
+
+
+class DailyHeadline(Base):
+    __tablename__ = 'daily_headlines'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    paper_id = Column(UUID(as_uuid=True), ForeignKey('papers.id'), nullable=True)
+
+    headline_date = Column(Date, nullable=False)
+    title = Column(String(500), nullable=False)
+    summary = Column(Text, nullable=False)
+    rank = Column(Integer, default=0)
+    extra_metadata = Column("metadata", JSON)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="daily_headlines")
+    paper = relationship("Paper", back_populates="headline_entries")
+    interactions = relationship("FeedInteraction", back_populates="headline")
+
+    __table_args__ = (
+        Index('idx_daily_headlines_user_date', 'user_id', 'headline_date'),
+    )
+
+
+class WeeklyReport(Base):
+    __tablename__ = 'weekly_reports'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+
+    week_start = Column(Date, nullable=False)
+    week_end = Column(Date, nullable=False)
+    summary = Column(Text)
+    extra_metadata = Column("metadata", JSON)
+
+    generated_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="weekly_reports")
+    included_papers = relationship("WeeklyReportPaper", back_populates="weekly_report", cascade="all, delete-orphan")
+    interactions = relationship("FeedInteraction", back_populates="weekly_report")
+
+    __table_args__ = (
+        Index('idx_weekly_reports_user_week', 'user_id', 'week_start'),
+    )
+
+
+class WeeklyReportPaper(Base):
+    __tablename__ = 'weekly_report_papers'
+
+    id = Column(Integer, primary_key=True)
+    weekly_report_id = Column(UUID(as_uuid=True), ForeignKey('weekly_reports.id'), nullable=False)
+    paper_id = Column(UUID(as_uuid=True), ForeignKey('papers.id'), nullable=True)
+
+    display_order = Column(Integer)
+    headline = Column(String(500))
+    summary = Column(Text)
+    extra_metadata = Column("metadata", JSON)
+
+    weekly_report = relationship("WeeklyReport", back_populates="included_papers")
+    paper = relationship("Paper", back_populates="weekly_report_entries")
+
+
+class FeedInteraction(Base):
+    __tablename__ = 'feed_interactions'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    paper_id = Column(UUID(as_uuid=True), ForeignKey('papers.id'), nullable=True)
+    headline_id = Column(Integer, ForeignKey('daily_headlines.id'), nullable=True)
+    weekly_report_id = Column(UUID(as_uuid=True), ForeignKey('weekly_reports.id'), nullable=True)
+
+    interaction_type = Column(String(50), nullable=False)  # like, dislike, save, request
+    value = Column(Float)
+    note = Column(Text)
+    extra_metadata = Column("metadata", JSON)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="feed_interactions")
+    paper = relationship("Paper")
+    headline = relationship("DailyHeadline", back_populates="interactions")
+    weekly_report = relationship("WeeklyReport", back_populates="interactions")

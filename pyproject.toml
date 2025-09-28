@@ -126,6 +126,7 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-report=html",
 ]
+pythonpath = ["src"]
 
 # Coverage configuration
 [tool.coverage.run]

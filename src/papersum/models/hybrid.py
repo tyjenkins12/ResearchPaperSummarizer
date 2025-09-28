@@ -32,7 +32,7 @@ class HybridSummarizer:
             self.abstractive = LightweightSummarizer()
             self.logger.info("Using lightweight abstractive model for Apple Silicon")
         else:
-            self.abstractive = AbstractiveSummarizer
+            self.abstractive = AbstractiveSummarizer()
 
     def _adaptive_strategy(self, paper: ExtractedPaper) -> SummaryStrategy:
         text_length = len(paper.full_text)
@@ -55,7 +55,7 @@ class HybridSummarizer:
 
     def _extract_then_abstract(self, paper: ExtractedPaper, target_length: int) -> str:
         extract_count = min(target_length // 20, 10)
-        extractive_summary - self.extractive.summarize_paper(paper, extract_count)
+        extractive_summary = self.extractive.summarize_paper(paper, extract_count)
 
         # Return early if extractive is short enough
         if len(extractive_summary.split()) <= target_length:
@@ -147,7 +147,7 @@ class HybridSummarizer:
         abstractive_summary = self.abstractive.summarize_paper(paper, target_length)
 
         if strategy == SummaryStrategy.EXTRACT_THEN_ABSTRACT:
-            hybrid_summary = self.extract_then_abstract(paper, target_length)
+            hybrid_summary = self._extract_then_abstract(paper, target_length)
         elif strategy == SummaryStrategy.PARALLEL_COMBINE:
             hybrid_summary = self._parallel_combine(paper, target_length)
         elif strategy == SummaryStrategy.SECTION_WISE:

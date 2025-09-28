@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
-from datetime import datetime
+from typing import List, Optional, Dict, Any, Literal
+from datetime import date, datetime
 from uuid import UUID
 
 
@@ -90,3 +90,50 @@ class UploadResponse(BaseModel):
     success_count: int
     error_count: int
     preferences_updated: bool
+
+
+class FeedHeadline(BaseModel):
+    """Schema for a daily headline entry"""
+    id: int
+    title: str
+    summary: str
+    rank: int
+    metadata: Dict[str, Any]
+    paper_id: Optional[UUID]
+    paper_title: Optional[str]
+    paper_url: Optional[str]
+
+
+class DailyFeedResponse(BaseModel):
+    """Schema for daily feed response"""
+    date: date
+    items: List[FeedHeadline]
+
+
+class WeeklyReportItem(BaseModel):
+    """Schema for an item inside the weekly highlight report"""
+    id: int
+    headline: str
+    summary: str
+    metadata: Dict[str, Any]
+    paper_id: Optional[UUID]
+
+
+class WeeklyFeedResponse(BaseModel):
+    """Schema for weekly feed response"""
+    id: UUID
+    week_start: date
+    week_end: date
+    summary: Optional[str]
+    metadata: Dict[str, Any]
+    items: List[WeeklyReportItem]
+
+
+class FeedFeedbackRequest(BaseModel):
+    """Schema for capturing feed interactions"""
+
+    target_type: Literal["headline", "weekly_item", "weekly_report", "paper"]
+    target_id: str
+    interaction_type: Literal["like", "dislike", "save", "request", "bookmark"]
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    note: Optional[str] = None

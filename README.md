@@ -1,6 +1,6 @@
 # Research Paper Summarizer (2025 Edition)
 
-AI-powered research paper summarization with personalized newsletters and automated preference learning.
+AI-powered research paper summarization with a personalized in-app research feed, daily TL;DR headlines, and automated preference learning.
 
 ## About This Project
 
@@ -21,17 +21,18 @@ This updated version addresses these issues using:
 
 ## Features
 
-### Complete Newsletter System
+### Personalized Research Feed
 - **AI-Powered Paper Analysis**: Local processing with Apple Silicon optimization
-- **Preference Learning**: Automatically learns your research interests from uploaded papers
+- **Preference Learning**: Automatically learns your research interests from uploaded papers and in-app feedback
 - **arXiv Integration**: Discovers relevant papers based on your preferences
-- **Automated Newsletters**: Weekly email digest with papers and coding tips
-- **Admin Dashboard**: Monitor system health and user activity
+- **Daily TL;DR Headlines**: Curated short summaries published directly in the app every morning
+- **Weekly Highlight Report**: Every Monday, get deeper summaries of the most notable papers from the previous week
+- **Feedback-Driven Experience**: Inline like/dislike controls and preference requests shape future recommendations
 
 ### Multiple Summarization Methods
 - **Extractive**: Identifies and extracts the most important sentences using semantic similarity
 - **Abstractive**: Generates new summary text using local transformer models
-- **Hybrid**: Intelligently combines both approaches for best results
+- **Hybrid**: Intelligently combines both approaches for best results and powers both daily TL;DR cards and weekly deep dives
 
 ### Advanced Text Processing
 - PDF parsing with Grobid integration for structured text extraction
@@ -39,9 +40,9 @@ This updated version addresses these issues using:
 - Automatic strategy selection based on paper characteristics
 
 ### Modern Architecture
-- FastAPI web interface for easy interaction
+- FastAPI web interface that now serves a personalized research feed
 - Docker deployment with production-ready setup
-- Email scheduling and automation
+- Background jobs for daily headlines and weekly highlight reports
 - Comprehensive admin dashboard
 
 ## Requirements
@@ -79,6 +80,13 @@ The application will be available at:
 
 ## Usage
 
+### App Experience
+- Open `http://localhost:8000` to see your personalized dashboard
+- Review the **Daily TL;DR** feed for short-form headlines tuned to your interests
+- Every Monday the **Weekly Highlights** tab shows deeper write-ups of the most noteworthy papers from the last 7 days
+- Provide quick feedback with like/dislike buttons or add specific topic requests to refine future recommendations
+- (Optional) Enable legacy newsletters if you still want email digests for archival purposes
+
 ### Command Line Interface
 ```bash
 # Process a single PDF
@@ -108,11 +116,16 @@ print(f"Hybrid Summary: {summary.hybrid_summary}")
 
 ### Web Interface
 ```bash
-# Start web server
-uvicorn papersum.api.main:app --reload
+# Start web server (from project root)
+uvicorn --app-dir src papersum.web.main:app --reload
 
-# Access at http://localhost:8000
+# Access the app-style dashboard at http://localhost:8000
 ```
+
+### Feed Configuration
+- Defaults favor lightweight summarization models and live arXiv discovery.
+- To run entirely offline (reuse locally processed papers and cached models), set `PAPERSUM_FEED__OFFLINE_MODE=true` before launching the server.
+- Adjust `PAPERSUM_FEED__USE_LIGHTWEIGHT_MODELS`, `PAPERSUM_FEED__MAX_DAILY_ITEMS`, and related env vars to tune generation behavior.
 
 ## Project Structure
 
@@ -122,7 +135,8 @@ uvicorn papersum.api.main:app --reload
 │   ├── models/            # Summarization models (extractive, abstractive, hybrid)
 │   ├── parse/             # PDF processing and text extraction
 │   ├── web/               # FastAPI web interface
-│   ├── newsletter/        # Newsletter generation and email system
+│   ├── feed/              # Daily TL;DR and weekly highlight generation (in progress)
+│   ├── newsletter/        # Legacy newsletter and email system (optional)
 │   ├── intelligence/      # Preference learning and recommendation
 │   └── database/          # Database models and operations
 ├── tests/                 # Test files

@@ -20,6 +20,18 @@ class GrobidConfig(BaseModel):
     timeout: int = 60
 
 
+class FeedConfig(BaseModel):
+    """Configuration for personalized feed generation."""
+
+    use_lightweight_models: bool = True
+    offline_mode: bool = False
+    max_daily_items: int = 5
+    max_weekly_items: int = 4
+    discovery_days_back: int = 2
+    weekly_days_back: int = 7
+    local_fallback_limit: int = 20
+
+
 class AppSettings(BaseSettings):
     app_name: str = "Research Paper Summarizer"
     version: str = "2.0.0"
@@ -30,6 +42,7 @@ class AppSettings(BaseSettings):
 
     models: ModelConfig = Field(default_factory = ModelConfig)
     grobid: GrobidConfig = Field(default_factory = GrobidConfig)
+    feed: FeedConfig = Field(default_factory = FeedConfig)
 
     max_file_size_mb: int = 50
     supported_formats: list[str] = ["pdf"]
